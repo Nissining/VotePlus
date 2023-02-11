@@ -143,11 +143,18 @@ public class VotePlus extends PluginBase implements Listener {
         );
 
         int defaultResult = config.getInt("未投票玩家默认结果");
+        // 发起人始终为同意方
+        voteData.addVotePlayer(new VotePlayer(originator.getName(), 1));
         // 服务器所有人加入投票
         getServer().getOnlinePlayers().values()
                 .stream()
                 .map(Player::getName)
-                .forEach(name -> voteData.addVotePlayer(new VotePlayer(name, defaultResult)));
+                .filter(name -> !name.equals(originator.getName()))
+                .forEach(name -> {
+                    if (defaultResult == 0 || defaultResult == 1) {
+                        voteData.addVotePlayer(new VotePlayer(name, defaultResult));
+                    }
+                });
 
         // 没有白名单，发起人可投票次数+1
         if (!isInWhiteList(originator.getName())) {
@@ -377,7 +384,6 @@ public class VotePlus extends PluginBase implements Listener {
                     }
                 });
     }
-
 
     public static void debug(String debug) {
         MainLogger.getLogger().notice(debug);

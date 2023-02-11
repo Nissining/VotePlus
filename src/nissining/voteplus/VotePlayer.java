@@ -34,7 +34,7 @@ public class VotePlayer {
     }
 
     public void setVoteResult(Integer voteResult) {
-        boolean b = this.voteCount < 1;
+        boolean b = this.voteCount < 1 || getVoteResult() != -1;
         if (b) {
             this.voteResult = voteResult;
             this.voteCount++;

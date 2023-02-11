@@ -60,7 +60,7 @@ public class VoteData {
         if (Objects.isNull(getVotePlayer(votePlayer.getName()))) {
             this.votePlayers.add(votePlayer);
             Optional.ofNullable(Server.getInstance().getPlayer(votePlayer.getName()))
-                    .ifPresent(p->p.sendMessage("§e请在聊天栏输入数字！0=§c反对 §e1=§a同意"));
+                    .ifPresent(p -> p.sendMessage("§e请在聊天栏输入数字！0=§c反对 §e1=§a同意"));
         }
     }
 
