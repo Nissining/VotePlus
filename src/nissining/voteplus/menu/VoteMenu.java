@@ -9,6 +9,9 @@ import cn.nukkit.form.window.FormWindowSimple;
 import nissining.voteplus.VotePlus;
 import nissining.voteplus.utils.MyForm;
 
+/**
+ * @author Nissining
+ **/
 public class VoteMenu {
 
     private final VotePlus votePlus;
@@ -48,10 +51,7 @@ public class VoteMenu {
                     return;
                 }
                 String reason = getChooseData();
-                Server.getInstance().dispatchCommand(
-                        player, "vote " + "\"" + target.getName() + "\"" + " " + reason
-                );
-
+                votePlus.startVote(player, target, reason);
             }
         };
         myForm.sendToPlayer(player);

@@ -2,6 +2,9 @@ package nissining.voteplus.tasks;
 
 import nissining.voteplus.VotePlus;
 
+/**
+ * @author Nissining
+ **/
 public class VoteCdTask extends VoteTask {
 
     public VoteCdTask(VotePlus votePlus) {
@@ -10,12 +13,8 @@ public class VoteCdTask extends VoteTask {
 
     @Override
     public void run() {
-        try {
-            sleep(votePlus.config.getInt("投票冷却时间") * 1000L);
-            votePlus.voteData = null;
-            votePlus.voteCdTask = null;
-        } catch (Exception e) {
-        }
+        votePlus.voteData = null;
+        votePlus.voteCdTask = null;
     }
 
 }

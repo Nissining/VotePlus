@@ -5,6 +5,7 @@ import cn.nukkit.command.Command;
 import cn.nukkit.command.CommandSender;
 import cn.nukkit.event.EventHandler;
 import cn.nukkit.event.Listener;
+import cn.nukkit.event.player.PlayerChatEvent;
 import cn.nukkit.event.player.PlayerJoinEvent;
 import cn.nukkit.event.player.PlayerQuitEvent;
 import cn.nukkit.plugin.PluginBase;
@@ -15,25 +16,23 @@ import nissining.voteplus.tasks.VoteCdTask;
 import nissining.voteplus.tasks.VoteTask;
 
 import java.io.File;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.StringJoiner;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.*;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
+/**
+ * @author Nissining
+ **/
 public class VotePlus extends PluginBase implements Listener {
 
     public VoteMenu menu;
     public Config config;
 
-    public static Executor executor = Executors.newWorkStealingPool();
-
     public VoteData voteData;
     public VoteCdTask voteCdTask;
 
-    public static String[] modes = new String[]{
-            "§a同意", "§c反对"
-    };
+    public static final ScheduledThreadPoolExecutor EXECUTOR = new ScheduledThreadPoolExecutor(
+            10);
 
     @Override
     public void onEnable() {
@@ -44,7 +43,7 @@ public class VotePlus extends PluginBase implements Listener {
         config = new Config(getDataFolder() + "/config.yml", 2, new ConfigSection() {{
             put("投票冷却时间", 60); // sec
             put("投票结束时间", 60); // sec
-            put("未投票玩家默认结果", 1); // 0=赞成 1=反对
+            put("未投票玩家默认结果", 1); // 0=反对 1=同意
             put("同意该投票触发指令", new ArrayList<String>() {{
                 add("kill %target");
             }});
@@ -53,7 +52,7 @@ public class VotePlus extends PluginBase implements Listener {
                 add("give %player 1 1");
             }});
             put("投票状态消息",
-                    "正在对玩家 %target 进行投票操作！/vote <y=同意 n=反对>\n\n" +
+                    "正在对玩家 %target 进行投票操作！请在聊天栏输入数字！ 1=同意 0=反对\n\n" +
                             "发起原因： %reason\n" +
                             "发起人： %player\n" +
                             "同意： %win                          反对： %lost"
@@ -118,8 +117,8 @@ public class VotePlus extends PluginBase implements Listener {
 
         // 发起次数限制
         EcoPlayer ecoPlayer = EcoPlayer.get(originator.getName());
-        if (ecoPlayer == null || ecoPlayer.getVote() >= getMaxVoteCount() && !isInWhiteList(originator.getName())) {
-            originator.sendMessage("§c发起失败！投票次数过多！");
+        if (ecoPlayer != null && ecoPlayer.getVote() >= getMaxVoteCount()) {
+            originator.sendMessage("§c发起失败！投票次数不足！");
             return;
         }
         // 黑名单
@@ -133,7 +132,6 @@ public class VotePlus extends PluginBase implements Listener {
             return;
         }
 
-//        originator.sendMessage("§a开始对玩家 " + target.getName() + " 进行投票操作！");
         getServer().broadcastMessage("§a玩家 §f" + originator.getName() + " §a对玩家§f " + target.getName() + " §a发起强制退场！");
         // 创建投票
         voteData = new VoteData(
@@ -143,71 +141,55 @@ public class VotePlus extends PluginBase implements Listener {
                 config.getInt("投票结束时间"),
                 this
         );
-        // 发起人加入同意
-        tryVote(originator, 0);
-        // 发起人投票次数+1
-        // 白名单不受影响
-        if (!isInWhiteList(originator.getName())) {
-            ecoPlayer.addVote();
-        }
-        // 投票结束倒计时
-        executor.execute(() -> new VoteTask(this).start());
-    }
 
-    public void checkVote() {
-        if (voteData == null) {
-            return;
+        int defaultResult = config.getInt("未投票玩家默认结果");
+        // 服务器所有人加入投票
+        getServer().getOnlinePlayers().values()
+                .stream()
+                .map(Player::getName)
+                .forEach(name -> voteData.addVotePlayer(new VotePlayer(name, defaultResult)));
+
+        // 没有白名单，发起人可投票次数+1
+        if (!isInWhiteList(originator.getName())) {
+            Optional.ofNullable(ecoPlayer)
+                    .ifPresent(EcoPlayer::addVote);
         }
-        int mode = config.getInt("未投票玩家默认结果");
-        // 没有参与投票默认投票
-        getServer().getOnlinePlayers().values().stream()
-                .filter(player -> !voteData.checkVote(player.getName()))
-                .forEach(player -> {
-                    voteData.vote(player.getName(), mode);
-                    player.sendMessage("你未进行投票！默认投票为： " + modes[mode]);
-                });
-        // 更新投票结果
-        voteData.updateResult();
+
+        // 投票结束倒计时
+        VoteTask voteTask = new VoteTask(this);
+        EXECUTOR.scheduleWithFixedDelay(voteTask, 0, 1, TimeUnit.SECONDS);
     }
 
     public void overVote() {
-        checkVote();
         disCmd();
     }
 
     public void disCmd() {
-        String cmdK;
-        if (voteData.result < 2) {
-            if (voteData.result == 0) {
-                cmdK = "同意";
-            } else {
-                cmdK = "反对";
-            }
-            config.getStringList(cmdK + "该投票触发指令").forEach(s -> getServer().dispatchCommand(
-                    getServer().getConsoleSender(),
-                    s.replaceAll("%target", "\"" + voteData.target.getName() + "\"")
-            ));
-        }
-    }
-
-    public String getVoteResultMsg() {
-        String[] ss = {
-                "§a已同意该投票操作",
-                "§c已反对该投票操作",
-                "§b同意和反对一致，投票操作失效"
-        };
-        StringJoiner sj = new StringJoiner("\n", ss[voteData.getVoteResult()], "");
-        sj.add("").add("").add(voteData.getVoteResultSocre());
-        return sj.toString();
+        Optional.ofNullable(voteData)
+                .ifPresent(voting -> {
+                    String cmdK;
+                    int result = Integer.compare(voting.getWinResultCount(), voting.getLostResultCount());
+                    if (result == -1) {
+                        cmdK = "反对";
+                    } else if (result == 1) {
+                        cmdK = "同意";
+                    } else {
+                        cmdK = "平局";
+                    }
+                    config.getStringList(cmdK + "该投票触发指令")
+                            .forEach(s -> getServer().dispatchCommand(
+                                    getServer().getConsoleSender(),
+                                    s.replaceAll("%target", "\"" + voteData.target.getName() + "\"")
+                            ));
+                });
     }
 
     public String getVoteStatus() {
-        if (voteData == null) {
-            return "发生错误！当前没有投票！";
+        if (Objects.isNull(voteData)) {
+            return "当前没有正在投票！";
         }
-
-        int win = voteData.getWinners();
-        int lost = voteData.getLost();
+        int win = voteData.getWinResultCount();
+        int lost = voteData.getLostResultCount();
         return config.getString("投票状态消息")
                 .replaceAll("%reason", voteData.reason)
                 .replaceAll("%target", voteData.target.getName())
@@ -216,25 +198,10 @@ public class VotePlus extends PluginBase implements Listener {
                 .replaceAll("%lost", String.valueOf(lost));
     }
 
-    public void tryVote(Player player, int mode) {
-        String t;
-        if (voteData == null) {
-            t = "§c当前没有发起投票！";
-        } else {
-            if (!voteData.checkVote(player.getName())) {
-                voteData.vote(player.getName(), mode);
-                t = "你已" + modes[mode] + "§f该投票！";
-            } else {
-                t = "§c你已参与这次投票了！";
-            }
-        }
-        player.sendMessage(t);
-    }
-
     public void cancel(Player player) {
         if (voteData != null && voteData.orig.getName().equalsIgnoreCase(player.getName())) {
-            VoteData.dummyBossBars.values().forEach(DummyBossBar::destroy);
-            VoteData.dummyBossBars.clear();
+            VoteData.BOSS_BAR.values().forEach(DummyBossBar::destroy);
+            VoteData.BOSS_BAR.clear();
             voteData = null;
             player.sendMessage("§a你已取消当前投票操作！");
             return;
@@ -258,6 +225,8 @@ public class VotePlus extends PluginBase implements Listener {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         String t = "";
         switch (command.getName()) {
+            default:
+                break;
             case "vote":
                 // UI
                 if (args.length == 0 && sender instanceof Player) {
@@ -265,21 +234,11 @@ public class VotePlus extends PluginBase implements Listener {
                     menu.openMenu(player);
                     return true;
                 }
-                // /vote <y/n>
-                if (args.length == 1) {
-                    Player player = (Player) sender;
-                    switch (args[0]) {
-                        case "y":
-                        case "yes":
-                            tryVote(player, 0);
-                            break;
-                        case "n":
-                        case "no":
-                            tryVote(player, 1);
-                            break;
-                        case "cancel":
-                            cancel(player);
-                            break;
+                boolean b = args.length == 1;
+                if (b && sender instanceof Player) {
+                    boolean cancel = "cancel".equals(args[0]);
+                    if (cancel) {
+                        cancel((Player) sender);
                     }
                 }
                 // vote <wl/bl> <name>
@@ -294,10 +253,11 @@ public class VotePlus extends PluginBase implements Listener {
                         target = args[1];
                     }
 
-                    String key = "";
-                    int keyId = -1;
+                    String key;
+                    int keyId;
 
                     switch (args[0]) {
+                        default:
                         case "wl":
                             key = "白名单";
                             keyId = 0;
@@ -308,32 +268,19 @@ public class VotePlus extends PluginBase implements Listener {
                             break;
                     }
 
-                    if (keyId != -1) {
-                        if (target.isEmpty()) {
-                            t = "找不到目标： " + target;
-                        } else {
-                            List<String> wl = config.getStringList(key);
-                            if (isIn(target, (keyId == 0))) {
-                                wl.remove(target);
-                                t = key + "移除玩家： " + target;
-                            } else {
-                                wl.add(target);
-                                t = key + "添加玩家： " + target;
-                            }
-                            config.set(key, wl);
-                            config.save();
-                        }
+                    if (target.isEmpty()) {
+                        t = "找不到目标： " + target;
                     } else {
-                        // vote <p> <r>
-                        if (sender instanceof Player) {
-                            Player player = (Player) sender;
-                            Player exact = getServer().getPlayerExact(args[0]);
-                            if (exact == null) {
-                                t = "目标 " + args[0] + " 不存在！";
-                            } else {
-                                startVote(player, exact, args[1]);
-                            }
+                        List<String> wl = config.getStringList(key);
+                        if (isIn(target, (keyId == 0))) {
+                            wl.remove(target);
+                            t = key + "移除玩家： " + target;
+                        } else {
+                            wl.add(target);
+                            t = key + "添加玩家： " + target;
                         }
+                        config.set(key, wl);
+                        config.save();
                     }
 
                 }
@@ -391,6 +338,13 @@ public class VotePlus extends PluginBase implements Listener {
         if (EcoPlayer.get(p.getName()) == null) {
             EcoPlayer.set(p.getName(), getPlayerConfig(p));
         }
+        // 如果当前服务器正在进行投票
+        Optional.ofNullable(voteData)
+                .ifPresent(voting -> {
+                    int defaultResult = config.getInt("未投票玩家默认结果");
+                    VotePlayer votePlayer = new VotePlayer(p.getName(), defaultResult);
+                    voting.addVotePlayer(votePlayer);
+                });
     }
 
     @EventHandler
@@ -401,11 +355,29 @@ public class VotePlus extends PluginBase implements Listener {
             ecoPlayer.save();
         }
         EcoPlayer.remove(player.getName());
-        if (VoteData.dummyBossBars.containsKey(player.getName())) {
-            VoteData.dummyBossBars.get(player.getName()).destroy();
-            VoteData.dummyBossBars.remove(player.getName());
+        if (VoteData.BOSS_BAR.containsKey(player.getName())) {
+            VoteData.BOSS_BAR.get(player.getName()).destroy();
+            VoteData.BOSS_BAR.remove(player.getName());
         }
     }
+
+    @EventHandler
+    public void onChat(PlayerChatEvent event) {
+        Player player = event.getPlayer();
+        String message = event.getMessage();
+        Optional.ofNullable(voteData)
+                .ifPresent(voting -> {
+                    switch (message) {
+                        default:
+                            break;
+                        case "1":
+                        case "0":
+                            voting.fixVote(player.getName(), Integer.parseInt(message));
+                            break;
+                    }
+                });
+    }
+
 
     public static void debug(String debug) {
         MainLogger.getLogger().notice(debug);
