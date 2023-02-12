@@ -163,8 +163,9 @@ public class VotePlus extends PluginBase implements Listener {
         }
 
         // 投票结束倒计时
+        int cd = config.getInt("投票冷却时间", 60);
         VoteTask voteTask = new VoteTask(this);
-        EXECUTOR.scheduleWithFixedDelay(voteTask, 0, 1, TimeUnit.SECONDS);
+        EXECUTOR.schedule(voteTask, cd, TimeUnit.SECONDS);
     }
 
     public void overVote() {
